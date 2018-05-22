@@ -31,7 +31,7 @@ http://users.ece.utexas.edu/~valvano/
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-#include "LM4F120.h"
+#include "cme331_LM4F120.h"
 #include "queue.h"
 #include "main.h"
 #include "SysTick_16.h"
@@ -79,14 +79,14 @@ uint8_t states[5];
 
 
 /*Trampoline areas*/
-int A1[2] = {54,55};
-int A2[4] ={30,31,38,39};
-int A3[16] = {3,4,11,12,19,20,27,28,35,36,43,44,51,52,59,60};
-int A4[3]= {16,24,32};
-int A5[3] = {5,6,7};
+int A0[16] = {3,4,11,12,19,20,27,28,35,36,43,44,51,52,59,60}; // Airbag
+int A1[4] = {54,55,62,63};  // Platform 1
+int A2[4] = {38,39,46,47};  // Platform 2
+int A3[5] = {5,6,7,14,15};  // Platform 3
+int A4[3] = {16,24,32};     // Platform 4
 
 int average_1, average_2;
-uint8_t rv;
+uint8_t NIQ;
 uint8_t flag;
 
 
@@ -340,11 +340,25 @@ void converter_new(uint8_t *ini_data_1, uint8_t *ini_data_2){
 }
 
 void slicer(uint8_t *new_data_1){
-    // assign trampoline 1
-    int a;
-    int i = 0;
 
-    // tramp_1
+    int a;          // point in platform matrix
+    int i = 0;      // whether or not that point is above average
+
+    // Airbag
+    int temp_0 = 0;
+    for (a=0;a<(sizeof(A0)/sizeof(int));a++){
+        i = A0[a];
+        temp_0 = temp_0 + new_data_1[i];
+    }
+
+    if(temp_0 == 0){
+        states[0] = 0;
+    }
+    else{
+        states[0] = 1;
+    }
+
+    // Platform 1
     int temp_1 = 0;
     for (a = 0;a<(sizeof(A1)/sizeof(int));a++){
         i = A1[a];
@@ -352,12 +366,12 @@ void slicer(uint8_t *new_data_1){
     }
 
     if(temp_1 == 0){
-        states[0] = 0;
+        states[1] = 0;
     }
     else{
-        states[0] = 1;
+        states[1] = 1;
     }
-    //tramp_2
+    // Platform 2
     int temp_2 = 0;
     for (a=0;a<(sizeof(A2)/sizeof(int));a++){
         i = A2[a];
@@ -365,12 +379,12 @@ void slicer(uint8_t *new_data_1){
     }
 
     if(temp_2 == 0){
-        states[1] = 0;
+        states[2] = 0;
     }
     else{
-        states[1] =1;
+        states[2] =1;
     }
-    // airbag
+    // Platform 3
     int temp_3 = 0;
     for (a=0;a<(sizeof(A3)/sizeof(int));a++){
         i = A3[a];
@@ -378,37 +392,25 @@ void slicer(uint8_t *new_data_1){
     }
 
     if(temp_3 == 0){
-        states[2] = 0;
-    }
-    else{
-        states[2] = 1;
-    }
-    //big platform
-    int temp_4 = 0;
-
-    for (a=0;a<(sizeof(A5)/sizeof(int));a++){
-        i = A5[a];
-        temp_4 = temp_4 + new_data_1[i];
-    }
-    if(temp_4 == 0){
         states[3] = 0;
     }
     else{
         states[3] = 1;
     }
-    //smal platform
-    int temp_5 = 0;
+    // Platform 4
+    int temp_4 = 0;
+
     for (a=0;a<(sizeof(A4)/sizeof(int));a++){
         i = A4[a];
-        temp_5 = temp_5 + new_data_1[i];
+        temp_4 = temp_4 + new_data_1[i];
     }
-
-    if(temp_5 == 0){
+    if(temp_4 == 0){
         states[4] = 0;
     }
     else{
         states[4] = 1;
     }
+
     i = 0;
 }
 
@@ -420,7 +422,7 @@ void scheduler(){
 
     /*if next in queue and ready to jump and nobody is in the airbag
      *
-     * rv = Next in Queue
+     * NIQ = Next in Queue
      * State[0] = next in queue platform available jumper?
      * state[2] = person in airbag
      * */
@@ -429,69 +431,70 @@ void scheduler(){
      *This signifies that there are jumpers ready on more than
      *one platform
      */
-    while((states[0] + states[1] + states[3] + states[4] > 1) && (flag == 1) && (counter < 5)){
+    while((states[1] + states[2] + states[3] + states[4] > 1) && (flag == 1) && (counter < 5)){
 
         /*allow jumper on current station 5 secs
          *and then remove from the queue*/
         /*
-        if (jump_timer > 500000){
+        if (jump_timer > 50000){
             Data_Display();
             counter++;
             jump_flag = 1;
         }
         */
-
+        ///*
         SysTick_Wait1ms(1000);
         Data_Display();
         counter++;
-
+        //*/
     }
 
     if(counter > 5){
 
-        LED_state[rv] = 0;
+        LED_state[NIQ] = 0;
         counter = 0;
-        push(rv);
-        rv = pop();
+        push(NIQ);
+        NIQ = pop();
         //jump_flag = 1;
 
     }
 
-    if((rv == 0) && (states[0] == 1) && (states[2] == 0)){
+    if ((NIQ > 3) || (states[1] + states[2] + states[3] + states[4] < 1) || (states[0] == 1)){
+
+        flag = 0;
+    }
+
+    /*No activity on platform. push back and pop new (PRIORITY)*/
+    if(flag == 0){
+
+        LED_state[NIQ] = 0;
+        push(NIQ);
+        NIQ = pop();
+    }
+
+    if((NIQ == 0) && (states[1] == 1) && (states[0] == 0)){
         LED_state[0] = 1;
         flag = 1;
         jump_flag = 1;
 
     }
-    else if((rv == 1) && (states[1] == 1) && (states[2] == 0)){
+    if((NIQ == 1) && (states[2] == 1) && (states[0] == 0)){
         LED_state[1] = 1;
         flag = 1;
         jump_flag = 1;
 
     }
-    else if((rv == 2) && (states[3] == 1) && (states[2] == 0)){
+    if((NIQ == 2) && (states[3] == 1) && (states[0] == 0)){
         LED_state[2] = 1;
         flag = 1;
         jump_flag = 1;
 
     }
-    else if((rv == 3) && (states[4] == 1) && (states[2] == 0)){
+    if((NIQ == 3) && (states[4] == 1) && (states[0] == 0)){
         LED_state[3] = 1;
         flag = 1;
         jump_flag = 1;
 
-    }
-    else{
-
-        flag = 0;
-    }
-
-    /*No activity on platform. push back and pop new*/
-    if(flag == 0){
-
-        LED_state[rv] = 0;
-        push(rv);
-        rv = pop();
     }
 
 }
@@ -523,7 +526,7 @@ void LED_Display(){
 
     }
 
-    else if((LED_state[1] == 0) && (j == 1)){
+    if((LED_state[1] == 0) && (j == 1)){
 
         turn_off();
         GPIO_PORTB_DATA |= anode[i];
@@ -538,7 +541,7 @@ void LED_Display(){
         GPIO_PORTB_DATA &= ~LED_2_g[i];
 
     }
-    else if((LED_state[2] == 0) && (j == 2)){
+    if((LED_state[2] == 0) && (j == 2)){
 
         turn_off();
         GPIO_PORTB_DATA |= anode[i];
@@ -555,7 +558,7 @@ void LED_Display(){
 
     }
 
-    else if((LED_state[3] == 0) && (j == 3)){
+    if((LED_state[3] == 0) && (j == 3)){
 
         turn_off();
         GPIO_PORTB_DATA |= anode[i];
@@ -723,7 +726,7 @@ int main(void){
     }
 
     /*Initial pop*/
-    rv = pop();
+    NIQ = pop();
 
 
     while (1){
@@ -741,3 +744,28 @@ int main(void){
     }
 
 }
+
+/* Scheduler that uses state machine to determine when the next jumper will go
+ * and whether the airbag is empty. Will use the data from the slicer to determine
+ * which platforms are currently in use.
+ *
+ * Will use timer flags to switch states, and keep track of when the previous state was used.
+ */
+void Scheduler_test_case(){
+
+    if((NIQ == 0) && (states[0] == 1) && (states[2] == 0)){
+        LED_state[0] = 1;
+        flag = 1;
+        jump_flag = 1;
+
+    }
+
+}
+
+
+
+
+
+
+
+
