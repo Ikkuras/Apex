@@ -1,0 +1,7 @@
+
+**** Build of configuration Debug for project Apex_Traffic_Controller ****
+
+/opt/ti/ccsv7/utils/bin/gmake -k -j 4 all -O 
+gmake[1]: 'Apex_Traffic_Controller.out' is up to date.
+
+**** Build Finished ****

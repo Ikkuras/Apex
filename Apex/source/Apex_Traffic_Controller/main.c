@@ -31,7 +31,7 @@ http://users.ece.utexas.edu/~valvano/
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-#include "cme331_LM4F120.h"
+#include "LM4F120.h"
 #include "queue.h"
 #include "main.h"
 #include "SysTick_16.h"
@@ -55,9 +55,10 @@ http://users.ece.utexas.edu/~valvano/
 
 volatile unsigned long Counts=0;
 
-unsigned long jump_timer;
-short int jump_flag;
-short int jump_start;
+unsigned long jump_timer;   // Timer to deal with when a jump is allowed
+short int jump_flag = 1;    // Flag to start the timer sequence
+short int jump_start;       // Start the timer
+int ready_to_jmp = 0;       // The alloted time has passed to allow a jumper
 
 int anode[3] = {0x02,0x01,0x10}; // LED_Display an arrow
 
@@ -86,9 +87,10 @@ int A3[5] = {5,6,7,14,15};  // Platform 3
 int A4[3] = {16,24,32};     // Platform 4
 
 int average_1, average_2;
-uint8_t NIQ;
+uint8_t NIQ;                // Next in Queue
+uint8_t stop_flag;          // Do not allow any new jumpers
+uint8_t qflag;              // Flag that handles when the queue is incremented
 uint8_t flag;
-
 
 void UART_send(unsigned char);
 
@@ -101,12 +103,12 @@ void init_gpio (void){
     //initialize registers for PORTA
     GPIO_PORTA_DIR |= 0x38;             // bit 3,4,5,6,and 7 set to 1 (output)
     GPIO_PORTA_DEN |= 0x38;             // bit 3,4,5,6,and 7 set to 1(enabled)
-    GPIO_PORTA_AFSEL &=~0x38;           //bit 3,4,5,6,and 7 set to 0 (disabled)
+    GPIO_PORTA_AFSEL &=~0x38;           // bit 3,4,5,6,and 7 set to 0 (disabled)
 
     //initialize registers for PORTB
     GPIO_PORTB_DIR |= 0xF3;             // bit 0,1,4,5,6,7  set to 1 (output)
     GPIO_PORTB_DEN |= 0xF3;             // bit 0,1,4,5,6,7set to 1 (enabled)
-    GPIO_PORTB_AFSEL &=~0xF3;           //bit 0,1,4,5,6,7 set to 0 (disabled)
+    GPIO_PORTB_AFSEL &=~0xF3;           // bit 0,1,4,5,6,7 set to 0 (disabled)
 
     //initialize registers for PORTC
     GPIO_PORTC_DIR |= 0xF0;             // bit 4,5,6,and 7  set to 1 (output)
@@ -115,12 +117,12 @@ void init_gpio (void){
     //initialize registers for PORTD
     GPIO_PORTD_DIR |= 0x4F;             // bit 0,1,2,3,and 6 set to 1 (output)
     GPIO_PORTD_DEN |= 0x4F;             // bit 0,1,2,3,and 6 set to 1 (enabled)
-    GPIO_PORTD_AFSEL &=~0x4F;           //bit 0,1,2,3, and 6 set to 0 (disabled)
+    GPIO_PORTD_AFSEL &=~0x4F;           // bit 0,1,2,3, and 6 set to 0 (disabled)
 
     //initialize registers for PORTE
     GPIO_PORTE_DIR |= 0x1F;             // bit 0,1,2,3,and 4  set to 1 (output)
     GPIO_PORTE_DEN |= 0x1F;             // bit 0,1,2,3, and 4 set to 1 (enabled)
-    GPIO_PORTE_AFSEL &=~0x1F;           //bit 0,1,2,3, and 4 set to 0 (disabled)
+    GPIO_PORTE_AFSEL &=~0x1F;           // bit 0,1,2,3, and 4 set to 0 (disabled)
 
 }
 
@@ -145,9 +147,9 @@ uint8_t I2C0_send_Recv(uint8_t reg_addr){
     I2C0_MSA_R &= ~0x01;                // MSA[0] is 0 for write
     I2C0_MDR_R = reg_addr;              // prepare first byte
     I2C0_MCS_R = (0
-            //| I2C_MCS_STOP            // generate stop
-            | I2C_MCS_START             // generate start/restart
-            | I2C_MCS_RUN);             // master enable
+    //| I2C_MCS_STOP                    // generate stop
+    | I2C_MCS_START                     // generate start/restart
+    | I2C_MCS_RUN);                     // master enable
     while(I2C0_MCS_R&I2C_MCS_BUSY){};   // wait for transmission done
 
     //check if slave address and register address sent correctly
@@ -157,10 +159,10 @@ uint8_t I2C0_send_Recv(uint8_t reg_addr){
         I2C0_MSA_R = (0x68<<1)&0xFE;        // MSA[7:1] is slave address
         I2C0_MSA_R |= 0x01;                 // MSA[0] is 1 for receive
         I2C0_MCS_R = (0
-                // & ~I2C_MCS_ACK           // negative data ack (last byte)
-                | I2C_MCS_STOP              // generate stop
-                | I2C_MCS_START             // generate start/restart
-                | I2C_MCS_RUN);             // master enable
+        // & ~I2C_MCS_ACK                   // negative data ack (last byte)
+        | I2C_MCS_STOP                      // generate stop
+        | I2C_MCS_START                     // generate start/restart
+        | I2C_MCS_RUN);                     // master enable
         while(I2C0_MCS_R&I2C_MCS_BUSY){};   // wait for transmission done
 
     }
@@ -415,10 +417,11 @@ void slicer(uint8_t *new_data_1){
     i = 0;
 }
 
+
 void scheduler(){
 
     int jump_counter = 0;
-    int wait_counter = 0;
+    //int wait_counter = 0;
 
     //check if station is next in queue and if there is someone at the station
 
@@ -427,7 +430,7 @@ void scheduler(){
      * NIQ = Next in Queue
      * State[0] = person in airbag
      * state[n] = person on platform
-     * */
+     */
 
     /*check if there is activity on more than one station
      *This signifies that there are jumpers ready on more than
@@ -453,7 +456,7 @@ void scheduler(){
 
     }
 
-    if ((NIQ > 3) || (states[1] + states[2] + states[3] + states[4] < 1) || (states[0] == 1)){
+    if ((NIQ > 4) || (states[1] + states[2] + states[3] + states[4] < 1) || (states[0] == 1)){
 
         flag = 0;
 
@@ -465,6 +468,7 @@ void scheduler(){
         LED_state[NIQ] = 0;
         push(NIQ);
         NIQ = pop();
+        /*
         // Once in an off state then keep it there for 3 seconds
         while (wait_counter < 3){
             SysTick_Wait1ms(1000);
@@ -472,30 +476,99 @@ void scheduler(){
             wait_counter++;
         }
         wait_counter = 0;
+        */
     }
 
-    if((NIQ == 0) && (states[1] == 1) && (states[0] == 0)){
+    if((NIQ == 1) && (states[1] == 1) && (states[0] == 0)){
         LED_state[1] = 1;
         flag = 1;
 
     }
-    if((NIQ == 1) && (states[2] == 1) && (states[0] == 0)){
+    if((NIQ == 2) && (states[2] == 1) && (states[0] == 0)){
         LED_state[2] = 1;
         flag = 1;
 
     }
-    if((NIQ == 2) && (states[3] == 1) && (states[0] == 0)){
+    if((NIQ == 3) && (states[3] == 1) && (states[0] == 0)){
         LED_state[3] = 1;
         flag = 1;
 
     }
-    if((NIQ == 3) && (states[4] == 1) && (states[0] == 0)){
+    if((NIQ == 4) && (states[4] == 1) && (states[0] == 0)){
         LED_state[4] = 1;
         flag = 1;
 
     }
 
 }
+
+
+
+/* Scheduler that uses state machine to determine when the next jumper will go
+ * and whether the airbag is empty. Will use the data from the slicer to determine
+ * which platforms are currently in use.
+ *
+ * Will use timer flags to switch states, and keep track of when the previous state was used.
+ */
+
+void Scheduler_test_case(){
+
+    // As soon as 5 seconds has passed  get ready to allow the next jumper when needed
+    if (jump_timer >= 1000){
+        ready_to_jmp = 1;
+    }
+
+    // If there is any activity in the airbag (states[0]) then stop all further jumping,
+    // otherwise allow jumpers if there is a person waiting on a platform
+    if ((states[0] == 1) || (states[1] + states[2] + states[3] + states[4] < 1)){
+        stop_flag = 1;
+    }
+    else if ((states[0] == 0) && (states[1] + states[2] + states[3] + states[4] > 1)){
+        stop_flag = 0;
+    }
+
+    // No activity on platform or someone has jumped, push back and pop new
+    if((qflag == 1) || (stop_flag == 1)){
+        LED_state[NIQ] = 0;
+        push(NIQ);
+        NIQ = pop();
+        qflag = 0;
+    }
+
+    /* If the alloted time has passed and there is no one in the airbag,
+     * then check which state is on and which point in the queue you are in.
+     * Once the correct state has been turned on, then reset the alloted time,
+     * and increment the queue
+     */
+    if ((ready_to_jmp == 1) && (stop_flag == 0)){
+        if((NIQ == 1) && (states[1] == 1)){
+            LED_state[1] = 1;
+            ready_to_jmp = 0;
+            jump_flag = 1;
+            qflag = 1;
+        }
+        if((NIQ == 2) && (states[2] == 1)){
+            LED_state[2] = 1;
+            ready_to_jmp = 0;
+            jump_flag = 1;
+            qflag = 1;
+        }
+        if((NIQ == 3) && (states[3] == 1)){
+            LED_state[3] = 1;
+            ready_to_jmp = 0;
+            jump_flag = 1;
+            qflag = 1;
+        }
+        if((NIQ == 4) && (states[4] == 1)){
+            LED_state[4] = 1;
+            ready_to_jmp = 0;
+            jump_flag = 1;
+            qflag = 1;
+        }
+    }
+
+}
+
 
 void turn_off(){
 
@@ -719,42 +792,30 @@ int main(void){
      * 3 - Platform 3
      * 4 - Platform 4
      */
-    for(i = 0; i <4; i++){
+    for(i = 1; i < 5; i++){
         push(i);
     }
 
     /*Initial pop*/
     NIQ = pop();
 
-
     while (1){
+
+        if (jump_flag == 1){
+            jump_start = NVIC_ST_CURRENT_R;
+            jump_flag = 0;
+        }
+
+        jump_timer = (jump_start-NVIC_ST_CURRENT_R)&0x00FFFFFF;
 
         //wait for interrupt
         Data_Display();
-        scheduler();
+        //scheduler();
+        Scheduler_test_case();
 
     }
 
 }
-
-/* Scheduler that uses state machine to determine when the next jumper will go
- * and whether the airbag is empty. Will use the data from the slicer to determine
- * which platforms are currently in use.
- *
- * Will use timer flags to switch states, and keep track of when the previous state was used.
- */
-/*
-void Scheduler_test_case(){
-
-    if((NIQ == 0) && (states[0] == 1) && (states[2] == 0)){
-        LED_state[0] = 1;
-        flag = 1;
-        jump_flag = 1;
-
-    }
-
-}
-*/
 
 
 
