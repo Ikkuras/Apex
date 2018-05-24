@@ -528,7 +528,7 @@ void Scheduler_test_case(){
     }
 
     // No activity on platform or someone has jumped, push back and pop new
-    if((qflag == 1) || (stop_flag == 1)){
+    if((qflag == 1) /*|| (stop_flag == 1)*/){
         LED_state[NIQ] = 0;
         push(NIQ);
         NIQ = pop();
